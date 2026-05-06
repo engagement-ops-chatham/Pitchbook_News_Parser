@@ -25,6 +25,41 @@ function Import-DotEnv {
   }
 }
 
+function Set-DotEnvValue {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+    [Parameter(Mandatory = $true)]
+    [string]$Name,
+    [Parameter(Mandatory = $true)]
+    [string]$Value
+  )
+
+  $lines = if (Test-Path -LiteralPath $Path) {
+    Get-Content -LiteralPath $Path
+  } else {
+    @()
+  }
+
+  $pattern = "^{0}=" -f [regex]::Escape($Name)
+  $updated = $false
+  $newLines = foreach ($line in $lines) {
+    if ($line -match $pattern) {
+      $updated = $true
+      "{0}={1}" -f $Name, $Value
+    } else {
+      $line
+    }
+  }
+
+  if (-not $updated) {
+    $newLines += "{0}={1}" -f $Name, $Value
+  }
+
+  Set-Content -LiteralPath $Path -Value $newLines
+  [System.Environment]::SetEnvironmentVariable($Name, $Value)
+}
+
 function Get-VibeBaseUrl {
   switch ($env:VIBE_ENVIRONMENT) {
     "development" { return "https://webapp-cfc-vibes-dev-eastus.azurewebsites.net" }
@@ -63,5 +98,9 @@ $response = Invoke-RestMethod -Uri "$baseUrl/api/v1/vibe_apps" -Method Post -Hea
   Authorization = "Bearer $env:VIBE_API_KEY"
   "Content-Type" = "application/json"
 } -Body $body
+
+if ($response.vibe_app -and $response.vibe_app.id) {
+  Set-DotEnvValue -Path $envFile -Name "VIBE_APP_ID" -Value ([string]$response.vibe_app.id)
+}
 
 $response | ConvertTo-Json -Depth 10

@@ -32,6 +32,7 @@ const QUEUES = [
     icon: AlertTriangle
   }
 ];
+const ENABLE_QUEUE_JOB_READS = false;
 
 function useJob(jobName, params) {
   const [state, setState] = useState({
@@ -131,10 +132,13 @@ function QueueCard({ item }) {
 }
 
 function QueuePage({ queue }) {
-  const { loading, error, data } = useJob("seed_fixture_ingest", {
-    action: "list_queue",
-    status: queue.status
-  });
+  const jobState = ENABLE_QUEUE_JOB_READS
+    ? useJob("seed_fixture_ingest", {
+        action: "list_queue",
+        status: queue.status
+      })
+    : { loading: false, error: "", data: { items: [] } };
+  const { loading, error, data } = jobState;
 
   if (loading) {
     return (
@@ -164,7 +168,7 @@ function QueuePage({ queue }) {
           <div className="text-sm uppercase tracking-[0.22em] text-slate-400">{queue.label}</div>
           <div className="mt-3 text-lg font-medium text-slate-800">{queue.emptyLabel}</div>
           <p className="mt-2 text-sm text-slate-500">
-            Queue reads stay behind secure-mode jobs until the record pipeline is added.
+            Queue reads stay behind secure-mode jobs until the record pipeline is added in the next task.
           </p>
         </div>
       </div>
