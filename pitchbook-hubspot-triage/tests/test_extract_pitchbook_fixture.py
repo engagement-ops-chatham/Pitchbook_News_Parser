@@ -50,6 +50,9 @@ def _assert_fixture_shape(fixture: dict) -> None:
 def test_committed_fixture_json_has_expected_shape(fixture_name: str):
     fixture = json.loads((FIXTURES_DIR / fixture_name).read_text(encoding="utf-8"))
     _assert_fixture_shape(fixture)
+    first_item = fixture["items"][0]
+    assert "urldefense.com" not in first_item["headline"]
+    assert "urldefense.com" not in first_item["raw_excerpt"]
 
 
 def test_extract_fixture_returns_expected_shape_for_sample_msg():
@@ -75,7 +78,7 @@ def test_extract_fixture_parses_items_from_fake_message():
         body = (
             "PitchBook 19-Mar-2026\n"
             "Example Source | 1:49 am | 18-Mar-2026\n"
-            "Example headline\n"
+            "Example headline <https://urldefense.com/v3/__https://example.com/story__>\n"
             "Example detail line\n"
         )
 

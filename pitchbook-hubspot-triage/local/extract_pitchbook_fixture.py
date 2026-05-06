@@ -9,10 +9,24 @@ from extract_msg import Message
 ITEM_SPLIT_RE = re.compile(
     r"\n\s*(?P<source>[^\n|]+)\s*\|\s*(?P<time>[^\n|]+)\s*\|\s*(?P<date>\d{1,2}-[A-Za-z]{3}-\d{4})\s*\n"
 )
+TRANSPORT_BLOB_RE = re.compile(r"\s*<https?://[^>]+>")
 
 
 def _clean_text(text: str) -> str:
     return text.replace("\r", "").replace("\u200a", "").replace("\u200d", "").strip()
+
+
+def _strip_transport_blobs(text: str) -> str:
+    return _clean_text(TRANSPORT_BLOB_RE.sub("", text))
+
+
+def _normalize_item_lines(chunk: str) -> list[str]:
+    lines = []
+    for raw_line in chunk.splitlines():
+        line = _strip_transport_blobs(raw_line)
+        if line:
+            lines.append(line)
+    return lines
 
 
 def extract_fixture(msg_path: Path) -> dict:
@@ -30,7 +44,7 @@ def extract_fixture(msg_path: Path) -> dict:
             published_time = _clean_text(segments[index + 1])
             published_date = _clean_text(segments[index + 2])
             chunk = _clean_text(segments[index + 3])
-            lines = [line.strip() for line in chunk.splitlines() if line.strip()]
+            lines = _normalize_item_lines(chunk)
             headline = lines[0] if lines else ""
 
             items.append(

@@ -2,12 +2,15 @@
 
 ## Local Commands
 
+- `python -m pip install -r requirements.txt`
 - `python -m pytest pitchbook-hubspot-triage/tests -q`
 - `python -m pytest pitchbook-hubspot-triage/tests/test_extract_pitchbook_fixture.py -q`
 - `python pitchbook-hubspot-triage/local/extract_pitchbook_fixture.py /path/to/sample.msg pitchbook-hubspot-triage/tests/fixtures/output.json`
 - `powershell -File pitchbook-hubspot-triage/scripts/create_app.ps1`
 - `powershell -File pitchbook-hubspot-triage/scripts/create_or_update_jobs.ps1`
 - `powershell -File pitchbook-hubspot-triage/scripts/deploy_app.ps1`
+
+Install dependencies first, then run the extractor and tests. The PowerShell script commands above are part of the upcoming Task 1 workflow and are documented here to match the bootstrap plan.
 
 ## Runtime Notes
 
