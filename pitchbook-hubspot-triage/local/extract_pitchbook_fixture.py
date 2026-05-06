@@ -43,6 +43,9 @@ def extract_fixture(msg_path: Path) -> dict:
                 }
             )
 
+    if not items:
+        raise ValueError(f"No PitchBook items found in message: {msg_path}")
+
     return {
         "source_subject": message.subject,
         "source_sender": message.sender,
