@@ -34,16 +34,28 @@ const QUEUES = [
 ];
 const ENABLE_QUEUE_JOB_READS = false;
 
-function useJob(jobName, params) {
+function useJob(jobName, params, options) {
   const [state, setState] = useState({
     loading: true,
     error: "",
     data: null
   });
   const serializedParams = JSON.stringify(params || {});
+  const enabled = !(options && options.enabled === false);
 
   useEffect(() => {
     let active = true;
+
+    if (!enabled) {
+      setState({
+        loading: false,
+        error: "",
+        data: { items: [] }
+      });
+      return () => {
+        active = false;
+      };
+    }
 
     setState({
       loading: true,
@@ -78,7 +90,7 @@ function useJob(jobName, params) {
     return () => {
       active = false;
     };
-  }, [jobName, serializedParams]);
+  }, [enabled, jobName, serializedParams]);
 
   return state;
 }
@@ -132,13 +144,14 @@ function QueueCard({ item }) {
 }
 
 function QueuePage({ queue }) {
-  const jobState = ENABLE_QUEUE_JOB_READS
-    ? useJob("seed_fixture_ingest", {
-        action: "list_queue",
-        status: queue.status
-      })
-    : { loading: false, error: "", data: { items: [] } };
-  const { loading, error, data } = jobState;
+  const { loading, error, data } = useJob(
+    "seed_fixture_ingest",
+    {
+      action: "list_queue",
+      status: queue.status
+    },
+    { enabled: ENABLE_QUEUE_JOB_READS }
+  );
 
   if (loading) {
     return (
