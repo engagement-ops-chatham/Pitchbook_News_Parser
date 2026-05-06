@@ -65,6 +65,41 @@ def test_extract_fixture_returns_expected_shape_for_sample_msg():
     _assert_fixture_shape(fixture)
 
 
+def test_extract_fixture_parses_items_from_fake_message():
+    module = _load_module()
+
+    class FakeMessage:
+        subject = 'PitchBook Alert - "PE/M&A Deals - Last 30 Days"'
+        sender = "PitchBook Alerts <alerts-noreply@alerts.pitchbook.com>"
+        date = "2026-03-19 07:21:19-04:00"
+        body = (
+            "PitchBook 19-Mar-2026\n"
+            "Example Source | 1:49 am | 18-Mar-2026\n"
+            "Example headline\n"
+            "Example detail line\n"
+        )
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    module.Message = FakeMessage
+
+    fixture = module.extract_fixture(Path("unused.msg"))
+
+    assert fixture["source_subject"] == FakeMessage.subject
+    assert fixture["source_sender"] == FakeMessage.sender
+    assert fixture["source_date"] == FakeMessage.date
+    assert fixture["items"] == [
+        {
+            "item_type": "news",
+            "headline": "Example headline",
+            "source_name": "Example Source",
+            "published_at": "18-Mar-2026 1:49 am",
+            "raw_excerpt": "Example headline\nExample detail line",
+        }
+    ]
+
+
 def test_extract_fixture_raises_when_no_items_are_found():
     module = _load_module()
 
