@@ -191,6 +191,20 @@ function publishEntraAuthResult(message) {
   return published;
 }
 
+function getSameOriginLocationCandidates() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  return [
+    {
+      location: window.location,
+      history: window.history,
+      document: window.document
+    }
+  ];
+}
+
 function readPublishedEntraAuthResult() {
   try {
     if (typeof window === "undefined" || !window.localStorage) return null;
@@ -958,29 +972,88 @@ function HomePage() {
   );
 }
 
-function PopupCallbackPage() {
-  const payload = readEntraAuthResultFromLocation();
-  const published = payload ? publishEntraAuthResult(payload) : false;
+function PopupCallbackPage({ state }) {
+  const status = state && state.status ? state.status : "success";
+  const detail =
+    state && state.detail
+      ? state.detail
+      : "The authentication result was sent back to the main app window. You can close this popup.";
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-100 px-6">
       <div className="max-w-md rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm shadow-slate-200/60">
-        <div className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">Microsoft 365</div>
-        <h1 className="mt-3 text-2xl font-semibold text-slate-950">Sign-in complete</h1>
-        <p className="mt-3 text-sm leading-6 text-slate-600">
-          {published
-            ? "The authentication result was sent back to the main app window. You can close this popup."
-            : "The main app window could not be reached automatically. Return to the app and retry the connection."}
-        </p>
+        <div
+          className={
+            status === "success"
+              ? "inline-flex rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700"
+              : "inline-flex rounded-full bg-rose-100 px-3 py-1 text-xs font-medium text-rose-700"
+          }
+        >
+          {status === "success" ? "Sign-In Complete" : "Sign-In Error"}
+        </div>
+        <h1 className="mt-3 text-2xl font-semibold text-slate-950">Microsoft 365 Popup</h1>
+        <p className="mt-3 text-sm leading-6 text-slate-600">{detail}</p>
       </div>
     </div>
   );
 }
 
 export default function App() {
-  const popupPayload = readEntraAuthResultFromLocation();
-  if (popupPayload) {
-    return <PopupCallbackPage />;
+  const popupAuthPayloadRef = useRef(readEntraAuthResultFromLocation());
+  const [popupCallbackState, setPopupCallbackState] = useState(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const message = popupAuthPayloadRef.current || readEntraAuthResultFromLocation();
+    if (!message) {
+      return undefined;
+    }
+
+    const candidates = getSameOriginLocationCandidates();
+    candidates.forEach((candidate) => {
+      try {
+        const params = new URLSearchParams(candidate.location.search || "");
+        if (!params.get("code") && !params.get("error")) {
+          return;
+        }
+
+        candidate.history.replaceState(
+          {},
+          candidate.document && candidate.document.title ? candidate.document.title : document.title,
+          candidate.location.pathname || "/"
+        );
+      } catch (_error) {
+        // Ignore history cleanup failures and continue publishing.
+      }
+    });
+
+    const published = publishEntraAuthResult(message);
+    const hasOauthError = !!message.error;
+    setPopupCallbackState({
+      status: published ? (hasOauthError ? "error" : "success") : "error",
+      detail: published
+        ? hasOauthError
+          ? message.errorDescription || "Microsoft sign-in did not complete."
+          : "Microsoft sign-in completed. This window can close automatically."
+        : "The popup could not communicate the sign-in result back to the main app."
+    });
+
+    const closeTimer = window.setTimeout(() => {
+      try {
+        window.close();
+      } catch (_error) {
+        // Ignore close failures; the callback page remains visible.
+      }
+    }, 450);
+
+    return () => window.clearTimeout(closeTimer);
+  }, []);
+
+  if (popupCallbackState || popupAuthPayloadRef.current) {
+    return <PopupCallbackPage state={popupCallbackState} />;
   }
 
   return <HomePage />;

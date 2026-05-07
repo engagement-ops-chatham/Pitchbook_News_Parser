@@ -17,3 +17,6 @@ def test_app_includes_manual_msg_upload_shell() -> None:
     assert "Sign in with Entra ID" in app_source
     assert "Run Mailbox Sync" in app_source
     assert "Mail.Read" in app_source
+    assert "popupAuthPayloadRef" in app_source
+    assert "Microsoft 365 Popup" in app_source
+    assert "Sign-In Complete" in app_source
