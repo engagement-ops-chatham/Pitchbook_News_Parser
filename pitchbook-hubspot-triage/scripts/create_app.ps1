@@ -90,7 +90,7 @@ $body = @{
     name = "PitchBook HubSpot Triage"
     jsx_code = $jsx
     semantic_version = "1.0.0"
-    client_record_access = "none"
+    client_record_access = "read"
   }
 } | ConvertTo-Json -Depth 8
 

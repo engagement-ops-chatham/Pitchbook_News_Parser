@@ -57,7 +57,7 @@ $jsx = Get-Content -LiteralPath $jsxPath -Raw
 $body = @{
   vibe_app = @{
     jsx_code = $jsx
-    client_record_access = "none"
+    client_record_access = "read"
   }
 } | ConvertTo-Json -Depth 8
 
