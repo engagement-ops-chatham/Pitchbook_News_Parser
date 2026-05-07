@@ -839,6 +839,7 @@ function MailboxConnectionPanel({ onSynced }) {
 
 function MsgUploadPanel() {
   const [message, setMessage] = useState("");
+  const [pastedEmail, setPastedEmail] = useState("");
 
   function handleUpload(event) {
     const file = event.target.files && event.target.files[0];
@@ -847,6 +848,15 @@ function MsgUploadPanel() {
     }
 
     setMessage(".msg upload received. Parsing adapter required.");
+  }
+
+  function handlePasteSubmit() {
+    if (!pastedEmail.trim()) {
+      setMessage("Paste an email body before submitting.");
+      return;
+    }
+
+    setMessage("Pasted email received. Parsing adapter required.");
   }
 
   return (
@@ -874,6 +884,23 @@ function MsgUploadPanel() {
             onChange={handleUpload}
             className="mt-3 block w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-600"
           />
+          <label className="mt-5 block text-sm font-medium text-slate-900" htmlFor="email-paste-input">
+            Or paste a PitchBook email
+          </label>
+          <textarea
+            id="email-paste-input"
+            value={pastedEmail}
+            onChange={(event) => setPastedEmail(event.target.value)}
+            placeholder="Paste the raw email body here"
+            className="mt-3 block min-h-40 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-600"
+          />
+          <button
+            type="button"
+            onClick={handlePasteSubmit}
+            className="mt-3 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200"
+          >
+            Use pasted email
+          </button>
           <div className="mt-3 min-h-6 text-sm text-slate-500">{message}</div>
         </div>
       </div>

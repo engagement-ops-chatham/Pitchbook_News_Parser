@@ -11,6 +11,9 @@ def test_app_includes_manual_msg_upload_shell() -> None:
     assert "MSG_PARSE_API_URL" in app_source
     assert "MSG_PARSE_API_TOKEN" in app_source
     assert "Parsing adapter required." in app_source
+    assert "Or paste a PitchBook email" in app_source
+    assert "Paste the raw email body here" in app_source
+    assert "Use pasted email" in app_source
     assert "Sign in with Entra ID" in app_source
     assert "Run Mailbox Sync" in app_source
     assert "Mail.Read" in app_source
