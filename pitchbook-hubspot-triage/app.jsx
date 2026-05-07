@@ -266,6 +266,39 @@ function clearPublishedEntraAuthResult() {
   }
 }
 
+function getCurrentUserEmail() {
+  try {
+    return String(VibeAppAPI?.currentUser?.email || "").trim().toLowerCase();
+  } catch (_error) {
+    return "";
+  }
+}
+
+async function upsertAuthExchangeRecord(patch) {
+  const requestedByEmail = getCurrentUserEmail();
+  const filters = requestedByEmail
+    ? { type: "auth_exchange_request", requestedByEmail }
+    : { type: "auth_exchange_request" };
+  const response = await VibeAppAPI.query(filters, { limit: 1, order: "updated_at desc" });
+  const records = Array.isArray(response?.records) ? response.records : [];
+  const nextData = Object.assign(
+    {
+      type: "auth_exchange_request",
+      requestedByEmail
+    },
+    records[0]?.data || {},
+    patch || {}
+  );
+
+  if (records.length) {
+    await VibeAppAPI.update([{ id: records[0].id, data: nextData }]);
+    return records[0].id;
+  }
+
+  const created = await VibeAppAPI.create([nextData]);
+  return created?.[0]?.id || null;
+}
+
 function createRandomString(length) {
   var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
   var randomValues = new Uint8Array(length);
@@ -597,6 +630,8 @@ function MailboxConnectionPanel({ onSynced }) {
   const [manualSyncing, setManualSyncing] = useState(false);
   const [authNotice, setAuthNotice] = useState("");
   const pendingAuthRef = useRef(null);
+  const authProcessorRef = useRef(null);
+  const popupWatchRef = useRef(null);
 
   const authConfigState = useJob(
     BOOTSTRAP_AUTH_JOB_NAME,
@@ -635,17 +670,51 @@ function MailboxConnectionPanel({ onSynced }) {
         return;
       }
 
-      clearPublishedEntraAuthResult();
-
-      if (payload.error) {
-        setAuthNotice(payload.errorDescription || "Microsoft sign-in did not complete.");
+      const pending = pendingAuthRef.current;
+      if (!pending) {
+        clearPublishedEntraAuthResult();
+        setAuthNotice("The sign-in response arrived without a pending request. Start Microsoft sign-in again.");
         setAuthBusy(false);
-        pendingAuthRef.current = null;
         return;
       }
 
-      if (!pendingAuthRef.current) {
-        setAuthNotice("The sign-in response arrived without a pending request. Start Microsoft sign-in again.");
+      if (pending.state && payload.state && pending.state !== payload.state) {
+        clearPublishedEntraAuthResult();
+        return;
+      }
+
+      if (popupWatchRef.current) {
+        window.clearInterval(popupWatchRef.current);
+        popupWatchRef.current = null;
+      }
+
+      pendingAuthRef.current = null;
+      clearPublishedEntraAuthResult();
+
+      if (payload.error) {
+        try {
+          await upsertAuthExchangeRecord({
+            status: "failed",
+            state: payload.state || pending.state || "",
+            expectedState: pending.state || "",
+            redirectUri: pending.redirectUri || "",
+            codeVerifier: "",
+            code: "",
+            oauthError: payload.error || "",
+            errorDescription: payload.errorDescription || "",
+            failedAt: new Date().toISOString(),
+            lastError: payload.errorDescription || payload.error || "Microsoft sign-in did not complete."
+          });
+        } catch (_recordError) {
+          // Ignore request-record persistence failures and keep the auth error visible.
+        }
+        setAuthNotice(payload.errorDescription || "Microsoft sign-in did not complete.");
+        setAuthBusy(false);
+        return;
+      }
+
+      if (!payload.code) {
+        setAuthNotice("Microsoft sign-in returned without an authorization code.");
         setAuthBusy(false);
         return;
       }
@@ -654,22 +723,58 @@ function MailboxConnectionPanel({ onSynced }) {
       setAuthNotice("Completing Microsoft sign-in...");
 
       try {
-        await VibeAppAPI.triggerJob(EXCHANGE_AUTH_JOB_NAME, {
+        await upsertAuthExchangeRecord({
+          status: "received",
+          state: payload.state || pending.state || "",
+          expectedState: pending.state || "",
+          redirectUri: pending.redirectUri || "",
+          codeVerifier: pending.codeVerifier || "",
+          code: payload.code || "",
+          oauthError: payload.error || "",
+          errorDescription: payload.errorDescription || "",
+          receivedAt: new Date().toISOString(),
+          lastError: ""
+        });
+        const response = await VibeAppAPI.triggerJob(EXCHANGE_AUTH_JOB_NAME, {
           code: payload.code,
           state: payload.state,
-          expectedState: pendingAuthRef.current.state,
-          codeVerifier: pendingAuthRef.current.codeVerifier,
-          redirectUri: pendingAuthRef.current.redirectUri
+          expectedState: pending.state,
+          codeVerifier: pending.codeVerifier,
+          redirectUri: pending.redirectUri,
+          requestedByEmail: getCurrentUserEmail()
+        });
+        if (!response?.success) {
+          throw new Error("The Entra auth code exchange did not complete.");
+        }
+        await upsertAuthExchangeRecord({
+          status: "completed",
+          code: "",
+          codeVerifier: "",
+          oauthError: "",
+          errorDescription: "",
+          completedAt: new Date().toISOString(),
+          failedAt: "",
+          lastError: ""
         });
         setAuthNotice("Microsoft 365 mailbox connected.");
-        pendingAuthRef.current = null;
         setRefreshToken((current) => current + 1);
       } catch (error) {
+        try {
+          await upsertAuthExchangeRecord({
+            status: "failed",
+            lastError: error && error.message ? error.message : "Microsoft sign-in completed, but the token exchange failed.",
+            failedAt: new Date().toISOString()
+          });
+        } catch (_recordError) {
+          // Ignore request-record persistence failures and keep surfacing the auth error.
+        }
         setAuthNotice(error && error.message ? error.message : "Microsoft sign-in could not be completed.");
       } finally {
         setAuthBusy(false);
       }
     }
+
+    authProcessorRef.current = processPayload;
 
     function handleWindowMessage(event) {
       if (event.origin !== window.location.origin || !event.data || event.data.type !== "entra-auth-result") {
@@ -710,11 +815,20 @@ function MailboxConnectionPanel({ onSynced }) {
     }
 
     return () => {
+      authProcessorRef.current = null;
       window.removeEventListener("message", handleWindowMessage);
       window.removeEventListener("storage", handleStorage);
       if (channel) {
         channel.removeEventListener("message", handleBroadcastMessage);
         channel.close();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (popupWatchRef.current && typeof window !== "undefined") {
+        window.clearInterval(popupWatchRef.current);
       }
     };
   }, []);
@@ -733,11 +847,21 @@ function MailboxConnectionPanel({ onSynced }) {
       const state = createRandomString(24);
       const codeVerifier = createRandomString(64);
       const codeChallenge = await createCodeChallenge(codeVerifier);
-      pendingAuthRef.current = {
+      await upsertAuthExchangeRecord({
+        status: "pending",
         state,
+        expectedState: state,
+        redirectUri,
         codeVerifier,
-        redirectUri
-      };
+        code: "",
+        oauthError: "",
+        errorDescription: "",
+        requestedAt: new Date().toISOString(),
+        receivedAt: "",
+        completedAt: "",
+        failedAt: "",
+        lastError: ""
+      });
 
       const authUrl = new URL("https://login.microsoftonline.com/" + authConfig.tenantId + "/oauth2/v2.0/authorize");
       authUrl.searchParams.set("client_id", authConfig.clientId);
@@ -754,7 +878,79 @@ function MailboxConnectionPanel({ onSynced }) {
         throw new Error("Popup blocked. Allow popups for this site and retry.");
       }
 
-      setAuthNotice("Finish Microsoft sign-in in the popup.");
+      popup.focus();
+      pendingAuthRef.current = {
+        state,
+        codeVerifier,
+        redirectUri
+      };
+      setAuthBusy(true);
+      setAuthNotice("Waiting for Microsoft sign-in to finish in the popup window...");
+
+      if (popupWatchRef.current) {
+        window.clearInterval(popupWatchRef.current);
+      }
+      popupWatchRef.current = window.setInterval(() => {
+        if (!pendingAuthRef.current) {
+          window.clearInterval(popupWatchRef.current);
+          popupWatchRef.current = null;
+          return;
+        }
+
+        const storedPayload = readPublishedEntraAuthResult();
+        if (storedPayload && authProcessorRef.current) {
+          authProcessorRef.current(storedPayload);
+          return;
+        }
+
+        if (popup.closed) {
+          window.clearInterval(popupWatchRef.current);
+          popupWatchRef.current = null;
+          pendingAuthRef.current = null;
+          setAuthBusy(false);
+          setAuthNotice("The Microsoft sign-in window was closed before the connection completed.");
+          return;
+        }
+
+        try {
+          const popupUrl = new URL(popup.location.href);
+          if (popupUrl.origin !== window.location.origin) {
+            return;
+          }
+
+          const code = popupUrl.searchParams.get("code");
+          const popupState = popupUrl.searchParams.get("state");
+          const oauthError = popupUrl.searchParams.get("error");
+          const errorDescription = popupUrl.searchParams.get("error_description") || "";
+          if (!code && !oauthError) {
+            return;
+          }
+
+          window.clearInterval(popupWatchRef.current);
+          popupWatchRef.current = null;
+
+          try {
+            popup.history.replaceState({}, popup.document?.title || "", `${popupUrl.pathname}${popupUrl.hash || ""}`);
+          } catch (_historyError) {
+            // Ignore popup history cleanup failures.
+          }
+
+          window.dispatchEvent(
+            new MessageEvent("message", {
+              origin: window.location.origin,
+              data: {
+                type: "entra-auth-result",
+                code,
+                state: popupState,
+                error: oauthError,
+                errorDescription
+              }
+            })
+          );
+        } catch (_popupAccessError) {
+          // Ignore cross-origin access errors until the popup returns to this origin.
+        }
+      }, 300);
     } catch (error) {
       setAuthNotice(error && error.message ? error.message : "Microsoft sign-in could not be started.");
       setAuthBusy(false);

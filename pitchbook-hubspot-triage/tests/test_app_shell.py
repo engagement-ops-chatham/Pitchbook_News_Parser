@@ -22,3 +22,6 @@ def test_app_includes_manual_msg_upload_shell() -> None:
     assert "Sign-In Complete" in app_source
     assert "pitchbook-mailbox-auth" in app_source
     assert "isAuthPopupWindow" in app_source
+    assert "upsertAuthExchangeRecord" in app_source
+    assert "popupWatchRef" in app_source
+    assert "Waiting for Microsoft sign-in to finish in the popup window..." in app_source
