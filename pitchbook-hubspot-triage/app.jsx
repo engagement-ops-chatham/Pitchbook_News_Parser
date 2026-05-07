@@ -33,6 +33,7 @@ const QUEUES = [
   }
 ];
 const QUEUE_JOB_NAME = "seed_fixture_ingest";
+const OVERRIDE_JOB_NAME = "resolve_match_override";
 
 function useJob(jobName, params, options) {
   const [state, setState] = useState({
@@ -110,7 +111,96 @@ function getActivePath() {
   return window.location.pathname;
 }
 
-function QueueCard({ item }) {
+function MatchOverride({ item, onUpdated }) {
+  const data = item.data || {};
+  const candidates = Array.isArray(data.match_candidates) ? data.match_candidates : [];
+  const [companyId, setCompanyId] = useState("");
+  const [message, setMessage] = useState("");
+  const [search, setSearch] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const filteredCandidates = candidates.filter((candidate) => {
+    const haystack = [
+      candidate.name || "",
+      candidate.ultimate_parent || "",
+      candidate.owner_name || "",
+      candidate.client_status || ""
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(search.trim().toLowerCase());
+  });
+
+  async function applyOverride() {
+    if (!companyId) {
+      return;
+    }
+
+    setPending(true);
+    setMessage("Applying override...");
+
+    try {
+      await VibeAppAPI.triggerJob(OVERRIDE_JOB_NAME, {
+        recordId: item.id,
+        companyId
+      });
+      setMessage("Override applied.");
+      if (onUpdated) {
+        onUpdated();
+      }
+    } catch (error) {
+      setMessage(error && error.message ? error.message : "Override failed.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  if (data.match_bucket !== "possible" && data.match_bucket !== "no-match") {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 rounded-2xl bg-slate-50 p-4">
+      <label className="block text-[11px] uppercase tracking-[0.2em] text-slate-500">Override company match</label>
+      <input
+        type="text"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Search company, parent, owner, or status"
+        className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none ring-0"
+      />
+      <select
+        value={companyId}
+        onChange={(event) => setCompanyId(event.target.value)}
+        className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+      >
+        <option value="">Select company</option>
+        {filteredCandidates.map((candidate) => (
+          <option key={candidate.id} value={candidate.id}>
+            {candidate.name} | {candidate.ultimate_parent || "No parent"} | {candidate.owner_name || "No owner"} |{" "}
+            {candidate.client_status || "Unknown"}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        disabled={!companyId || pending}
+        onClick={applyOverride}
+        className="mt-3 rounded-full bg-slate-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+      >
+        {pending ? "Applying..." : "Apply override"}
+      </button>
+      <div className="mt-2 text-sm text-slate-500">{message}</div>
+    </div>
+  );
+}
+
+function QueueCard({ item, onUpdated }) {
   const data = item.data || {};
 
   return (
@@ -147,6 +237,17 @@ function QueueCard({ item }) {
         </div>
       </dl>
 
+      <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate-600">
+        <div className="rounded-full bg-slate-100 px-3 py-1">
+          Candidates: {Array.isArray(data.match_candidates) ? data.match_candidates.length : 0}
+        </div>
+        {data.selected_company_id ? (
+          <div className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">
+            Selected: {data.selected_company_id}
+          </div>
+        ) : null}
+      </div>
+
       {data.pending_note_body ? (
         <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3">
           <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-700">Pending Note</div>
@@ -155,11 +256,13 @@ function QueueCard({ item }) {
           </pre>
         </div>
       ) : null}
+
+      <MatchOverride item={item} onUpdated={onUpdated} />
     </article>
   );
 }
 
-function QueuePage({ queue, refreshToken }) {
+function QueuePage({ queue, refreshToken, onUpdated }) {
   const { loading, error, data } = useJob(
     QUEUE_JOB_NAME,
     {
@@ -207,7 +310,7 @@ function QueuePage({ queue, refreshToken }) {
   return (
     <div className="space-y-4 px-6 py-6">
       {items.map((item) => (
-        <QueueCard key={item.id} item={item} />
+        <QueueCard key={item.id} item={item} onUpdated={onUpdated} />
       ))}
     </div>
   );
@@ -342,7 +445,13 @@ function HomePage() {
             <Route
               key={queue.path}
               path={queue.path}
-              component={() => <QueuePage queue={queue} refreshToken={refreshToken} />}
+              component={() => (
+                <QueuePage
+                  queue={queue}
+                  refreshToken={refreshToken}
+                  onUpdated={() => setRefreshToken((current) => current + 1)}
+                />
+              )}
             />
           ))}
         </Routes>

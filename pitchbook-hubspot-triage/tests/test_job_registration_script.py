@@ -11,3 +11,16 @@ def test_process_alert_items_job_is_server_only() -> None:
     assert 'name = "process_alert_items"' in script
     assert "job_type = \"async\"" in script
     assert "invokable_from_client = $false" in script
+
+
+def test_resolve_match_override_job_is_client_invokable() -> None:
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "create_or_update_jobs.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert 'name = "resolve_match_override"' in script
+    assert "job_type = \"sync\"" in script
+    assert "description = \"Applies reviewer-selected HubSpot match overrides\"" in script
+    assert "invokable_from_client = $true" in script

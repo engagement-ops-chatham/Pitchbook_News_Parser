@@ -126,10 +126,15 @@ $analysisJobPath = Join-Path $root "jobs\process_alert_items.js"
 if (-not (Test-Path -LiteralPath $analysisJobPath)) {
   throw "Missing job script at $analysisJobPath"
 }
+$overrideJobPath = Join-Path $root "jobs\resolve_match_override.js"
+if (-not (Test-Path -LiteralPath $overrideJobPath)) {
+  throw "Missing job script at $overrideJobPath"
+}
 
 $baseUrl = Get-VibeBaseUrl
 $seedScript = Get-Content -LiteralPath $jobPath -Raw
 $analysisScript = Get-Content -LiteralPath $analysisJobPath -Raw
+$overrideScript = Get-Content -LiteralPath $overrideJobPath -Raw
 $jobDefinitions = @(
   @{
     name = "seed_fixture_ingest"
@@ -147,6 +152,15 @@ $jobDefinitions = @(
     description = "Classifies trigger relevance and corroborates sources"
     enabled = $true
     invokable_from_client = $false
+    concurrency_policy = "reject_overlapping"
+  },
+  @{
+    name = "resolve_match_override"
+    job_type = "sync"
+    script = $overrideScript
+    description = "Applies reviewer-selected HubSpot match overrides"
+    enabled = $true
+    invokable_from_client = $true
     concurrency_policy = "reject_overlapping"
   }
 )

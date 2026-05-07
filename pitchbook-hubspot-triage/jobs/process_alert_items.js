@@ -16,6 +16,7 @@ var DEFAULT_TRIGGER_TERMS = [
   "acquisition"
 ];
 var QUEUE_BATCH_SIZE = 25;
+var HUBSPOT_COMPANY_CONNECTOR = "customer_relationship_management_hubspot";
 
 function requireSecret(api, name) {
   var value = api.getSecret(name);
@@ -163,12 +164,208 @@ function buildAnalysisUpdate(data, classification, evidenceStatus, source) {
   };
 }
 
+function normalizeHubSpotCandidate(rawCandidate) {
+  var candidate = rawCandidate || {};
+  var properties = candidate.properties || {};
+
+  return {
+    id: String(candidate.id || properties.id || ""),
+    name: properties.name || candidate.name || "",
+    ultimate_parent:
+      properties.ultimate_parent_name ||
+      properties.ultimate_parent ||
+      candidate.ultimate_parent ||
+      "",
+    owner_name:
+      properties.hubspot_owner_name ||
+      properties.owner_name ||
+      candidate.owner_name ||
+      properties.hubspot_owner_id ||
+      "",
+    client_status: properties.client_status || candidate.client_status || ""
+  };
+}
+
+function normalizeHubSpotCandidates(result) {
+  var source = result || {};
+  var data = source.data || source;
+  var rows = Array.isArray(data.results) ? data.results : Array.isArray(data.companies) ? data.companies : [];
+
+  return rows
+    .map(normalizeHubSpotCandidate)
+    .filter(function(candidate) {
+      return candidate.id && candidate.name;
+    });
+}
+
+function queryHubSpotCompanies(api, name) {
+  if (!api.queryConnector) {
+    throw new Error("HubSpot connector access is not available");
+  }
+
+  var result = api.queryConnector({
+    connector: HUBSPOT_COMPANY_CONNECTOR,
+    endpoint: "/crm/v3/objects/companies/search",
+    method: "POST",
+    body: {
+      query: name,
+      limit: 5,
+      properties: ["name", "ultimate_parent_name", "hubspot_owner_id", "client_status"]
+    }
+  });
+
+  if (result && typeof result.status === "number" && result.status >= 400) {
+    throw new Error("HubSpot company query failed with status " + result.status);
+  }
+
+  return normalizeHubSpotCandidates(result);
+}
+
+function buildMatchValidationPayload(data, classification, candidates) {
+  return {
+    mode: "match_validation",
+    headline: data.headline || "",
+    excerpt: data.raw_excerpt || "",
+    company_name: classification.company_name || data.company_name || data.headline || "",
+    relevance_status: classification.relevance_status || "",
+    relevance_rationale: classification.relevance_rationale || classification.rationale || "",
+    matched_trigger_terms: normalizeMatchedTerms(
+      classification.matched_trigger_terms || classification.trigger_terms
+    ),
+    candidates: candidates
+  };
+}
+
+function normalizeReviewCandidates(reviewCandidates, fallbackCandidates) {
+  if (!Array.isArray(reviewCandidates) || !reviewCandidates.length) {
+    return fallbackCandidates;
+  }
+
+  var fallbackById = {};
+  fallbackCandidates.forEach(function(candidate) {
+    fallbackById[String(candidate.id)] = candidate;
+  });
+
+  return reviewCandidates
+    .map(function(candidate) {
+      var normalized = normalizeHubSpotCandidate(candidate);
+      var existing = fallbackById[String(normalized.id)];
+      return {
+        id: normalized.id || (existing ? existing.id : ""),
+        name: normalized.name || (existing ? existing.name : ""),
+        ultimate_parent: normalized.ultimate_parent || (existing ? existing.ultimate_parent : ""),
+        owner_name: normalized.owner_name || (existing ? existing.owner_name : ""),
+        client_status: normalized.client_status || (existing ? existing.client_status : "")
+      };
+    })
+    .filter(function(candidate) {
+      return candidate.id && candidate.name;
+    });
+}
+
+function resolveSelectedCandidate(review, candidates) {
+  if (!review) {
+    return null;
+  }
+
+  var selected = review.selected_candidate || null;
+  var selectedId =
+    selected && typeof selected === "object"
+      ? String(selected.id || "")
+      : review.selected_candidate_id
+        ? String(review.selected_candidate_id)
+        : selected
+          ? String(selected)
+          : "";
+
+  if (!selectedId) {
+    return null;
+  }
+
+  return (
+    candidates.find(function(candidate) {
+      return String(candidate.id) === selectedId;
+    }) || null
+  );
+}
+
+function assignMatchBucket(review, candidates) {
+  if (review && review.match_bucket === "high-confidence" && resolveSelectedCandidate(review, candidates)) {
+    return "high-confidence";
+  }
+
+  if (review && review.match_bucket === "possible") {
+    return "possible";
+  }
+
+  if (!candidates.length) {
+    return "no-match";
+  }
+
+  return "possible";
+}
+
+function buildPendingNote(data, classification, evidenceStatus, source, selectedCandidate, reviewerEmail) {
+  var lines = [
+    "Trigger: " + (data.headline || "Untitled alert"),
+    "Why it matters: " + (classification.relevance_rationale || classification.rationale || "Relevant service trigger"),
+    "Evidence: " + evidenceStatus
+  ];
+
+  if (source && source.title) {
+    lines.push("Source: " + source.title + (source.url ? " (" + source.url + ")" : ""));
+  }
+
+  if (selectedCandidate && selectedCandidate.owner_name) {
+    lines.push("Owner: " + selectedCandidate.owner_name);
+  }
+
+  if (reviewerEmail) {
+    lines.push("Override applied by: " + reviewerEmail);
+  }
+
+  return lines.join("\n");
+}
+
+function buildMatchedUpdate(data, classification, evidenceStatus, source, candidates, review) {
+  var reviewedCandidates = normalizeReviewCandidates(review && review.candidates, candidates);
+  var selectedCandidate = resolveSelectedCandidate(review, reviewedCandidates);
+  var matchBucket = assignMatchBucket(review, reviewedCandidates);
+  var pendingNote =
+    matchBucket === "high-confidence" && selectedCandidate
+      ? buildPendingNote(data, classification, evidenceStatus, source, selectedCandidate, "")
+      : "";
+
+  return {
+    ...buildAnalysisUpdate(data, classification, evidenceStatus, source),
+    processing_status: "matched",
+    match_bucket: matchBucket,
+    match_candidates: reviewedCandidates,
+    selected_company_id: selectedCandidate ? selectedCandidate.id : "",
+    owner_name: selectedCandidate ? selectedCandidate.owner_name || "" : "",
+    pending_note_body: pendingNote
+  };
+}
+
 function buildFailureUpdate(data, error) {
   return {
     ...data,
     processing_status: "analysis-failed",
     evidence_status: "skipped",
     relevance_rationale: "Analysis failed: " + error.message
+  };
+}
+
+function buildMatchFailureUpdate(data, classification, evidenceStatus, source, error) {
+  return {
+    ...buildAnalysisUpdate(data, classification, evidenceStatus, source),
+    processing_status: "match-failed",
+    match_bucket: "unprocessed",
+    match_rationale: "HubSpot matching failed: " + error.message,
+    match_candidates: data.match_candidates || [],
+    selected_company_id: data.selected_company_id || "",
+    owner_name: data.owner_name || "",
+    pending_note_body: data.pending_note_body || ""
   };
 }
 
@@ -202,7 +399,11 @@ function createProcessAlertItems(api, runtime) {
       corroborated_count: 0,
       not_found_count: 0,
       skipped_count: 0,
-      research_failed_count: 0
+      research_failed_count: 0,
+      high_confidence_count: 0,
+      possible_count: 0,
+      no_match_count: 0,
+      match_failed_count: 0
     };
     var queue = listQueuedRecords();
 
@@ -256,6 +457,35 @@ function createProcessAlertItems(api, runtime) {
           }
 
           var updatedData = buildAnalysisUpdate(data, classification, evidenceStatus, source);
+
+          if (relevanceStatus === "relevant") {
+            try {
+              var companyName = classification.company_name || data.company_name || data.headline || "";
+              var candidates = queryHubSpotCompanies(api, companyName);
+              var review = null;
+
+              if (candidates.length) {
+                review = postJson(
+                  fetchImpl,
+                  triggerApiUrl,
+                  triggerApiToken,
+                  buildMatchValidationPayload(data, classification, candidates)
+                );
+              }
+
+              updatedData = buildMatchedUpdate(data, classification, evidenceStatus, source, candidates, review);
+            } catch (matchError) {
+              console.error(
+                "process_alert_items: match failed for record " +
+                  String(record.id || "") +
+                  " error=" +
+                  matchError.message
+              );
+              updatedData = buildMatchFailureUpdate(data, classification, evidenceStatus, source, matchError);
+              incrementCount(summary, "match_failed_count");
+            }
+          }
+
           updates.push({
             id: record.id,
             data: updatedData
@@ -278,6 +508,16 @@ function createProcessAlertItems(api, runtime) {
             incrementCount(summary, "research_failed_count");
           } else {
             incrementCount(summary, "skipped_count");
+          }
+
+          if (updatedData.processing_status === "matched") {
+            if (updatedData.match_bucket === "high-confidence") {
+              incrementCount(summary, "high_confidence_count");
+            } else if (updatedData.match_bucket === "possible") {
+              incrementCount(summary, "possible_count");
+            } else if (updatedData.match_bucket === "no-match") {
+              incrementCount(summary, "no_match_count");
+            }
           }
         } catch (error) {
           console.error(
@@ -314,16 +554,29 @@ function createProcessAlertItems(api, runtime) {
 if (typeof module !== "undefined") {
   module.exports = {
     DEFAULT_TRIGGER_TERMS: DEFAULT_TRIGGER_TERMS,
+    HUBSPOT_COMPANY_CONNECTOR: HUBSPOT_COMPANY_CONNECTOR,
     QUEUE_BATCH_SIZE: QUEUE_BATCH_SIZE,
+    assignMatchBucket: assignMatchBucket,
     buildAnalysisUpdate: buildAnalysisUpdate,
     buildClassificationPayload: buildClassificationPayload,
     buildEvidencePayload: buildEvidencePayload,
+    buildFailureUpdate: buildFailureUpdate,
+    buildMatchedUpdate: buildMatchedUpdate,
+    buildMatchFailureUpdate: buildMatchFailureUpdate,
+    buildMatchValidationPayload: buildMatchValidationPayload,
+    buildPendingNote: buildPendingNote,
     createProcessAlertItems: createProcessAlertItems,
     extractCorroboratingSource: extractCorroboratingSource,
+    normalizeHubSpotCandidate: normalizeHubSpotCandidate,
+    normalizeHubSpotCandidates: normalizeHubSpotCandidates,
     normalizeMatchedTerms: normalizeMatchedTerms,
     normalizeRelevanceStatus: normalizeRelevanceStatus,
+    normalizeReviewCandidates: normalizeReviewCandidates,
     postJson: postJson,
-    requireSecret: requireSecret
+    queryHubSpotCompanies: queryHubSpotCompanies,
+    recordData: recordData,
+    requireSecret: requireSecret,
+    resolveSelectedCandidate: resolveSelectedCandidate
   };
 }
 
