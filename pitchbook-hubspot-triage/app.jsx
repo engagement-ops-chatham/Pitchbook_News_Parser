@@ -32,7 +32,7 @@ const QUEUES = [
     icon: AlertTriangle
   }
 ];
-const ENABLE_QUEUE_JOB_READS = false;
+const QUEUE_JOB_NAME = "seed_fixture_ingest";
 
 function useJob(jobName, params, options) {
   const [state, setState] = useState({
@@ -80,9 +80,16 @@ function useJob(jobName, params, options) {
           return;
         }
 
+        const message =
+          error && error.status === 409
+            ? "Another queue operation is already running. Retry in a moment."
+            : error && error.message
+              ? error.message
+              : "Job failed";
+
         setState({
           loading: false,
-          error: error && error.message ? error.message : "Job failed",
+          error: message,
           data: null
         });
       });
@@ -127,30 +134,39 @@ function QueueCard({ item }) {
 
       <dl className="mt-4 grid gap-3 text-sm text-slate-600 md:grid-cols-3">
         <div className="rounded-2xl bg-slate-50 px-3 py-2">
-          <dt className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Sender</dt>
-          <dd className="mt-1 truncate">{data.source_sender || "Unknown sender"}</dd>
+          <dt className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Source</dt>
+          <dd className="mt-1 truncate">{data.source_name || data.source_sender || "Unknown source"}</dd>
         </div>
         <div className="rounded-2xl bg-slate-50 px-3 py-2">
-          <dt className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Received</dt>
-          <dd className="mt-1">{data.received_at || "Pending"}</dd>
+          <dt className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Published</dt>
+          <dd className="mt-1">{data.published_at || data.received_at || "Pending"}</dd>
         </div>
         <div className="rounded-2xl bg-slate-50 px-3 py-2">
           <dt className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Evidence</dt>
           <dd className="mt-1">{data.evidence_status || "pending"}</dd>
         </div>
       </dl>
+
+      {data.pending_note_body ? (
+        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3">
+          <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-700">Pending Note</div>
+          <pre className="mt-2 whitespace-pre-wrap font-sans text-sm leading-6 text-emerald-950">
+            {data.pending_note_body}
+          </pre>
+        </div>
+      ) : null}
     </article>
   );
 }
 
-function QueuePage({ queue }) {
+function QueuePage({ queue, refreshToken }) {
   const { loading, error, data } = useJob(
-    "seed_fixture_ingest",
+    QUEUE_JOB_NAME,
     {
       action: "list_queue",
-      status: queue.status
-    },
-    { enabled: ENABLE_QUEUE_JOB_READS }
+      status: queue.status,
+      refresh_token: refreshToken
+    }
   );
 
   if (loading) {
@@ -181,7 +197,7 @@ function QueuePage({ queue }) {
           <div className="text-sm uppercase tracking-[0.22em] text-slate-400">{queue.label}</div>
           <div className="mt-3 text-lg font-medium text-slate-800">{queue.emptyLabel}</div>
           <p className="mt-2 text-sm text-slate-500">
-            Queue reads stay behind secure-mode jobs until the record pipeline is added in the next task.
+            Seed one of the development fixtures to populate this queue through the secure sync job.
           </p>
         </div>
       </div>
@@ -225,7 +241,77 @@ function ShellNav() {
   );
 }
 
+function SeedButtons({ onSeeded }) {
+  const [message, setMessage] = useState("");
+  const [pendingFixture, setPendingFixture] = useState("");
+
+  async function seedFixture(fixtureName) {
+    setPendingFixture(fixtureName);
+    setMessage("Seeding fixture...");
+
+    try {
+      const result = await VibeAppAPI.triggerJob(QUEUE_JOB_NAME, {
+        action: "seed_demo_fixture",
+        fixture_name: fixtureName
+      });
+      const payload = result && result.result ? result.result : result;
+      const createdCount = payload && typeof payload.created_count === "number" ? payload.created_count : 0;
+      const skippedCount = payload && typeof payload.skipped_count === "number" ? payload.skipped_count : 0;
+
+      setMessage("Seeded " + fixtureName + " (" + createdCount + " created, " + skippedCount + " skipped).");
+      if (onSeeded) {
+        onSeeded();
+      }
+    } catch (error) {
+      const message =
+        error && error.status === 409
+          ? "Another queue operation is already running. Retry in a moment."
+          : error && error.message
+            ? error.message
+            : "Failed to seed fixture.";
+      setMessage(message);
+    } finally {
+      setPendingFixture("");
+    }
+  }
+
+  return (
+    <section className="mx-6 rounded-3xl border border-slate-200/80 bg-white/80 p-5 shadow-sm shadow-slate-200/40">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Development Seed Controls</div>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+            These buttons call the trusted sync job and create internal alert records for each queue state without enabling
+            client-side record access.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={pendingFixture === "pe_ma"}
+            onClick={() => seedFixture("pe_ma")}
+            className="rounded-full bg-slate-950 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+          >
+            {pendingFixture === "pe_ma" ? "Seeding..." : "Seed PE/M&A Fixture"}
+          </button>
+          <button
+            type="button"
+            disabled={pendingFixture === "watchlist_companies"}
+            onClick={() => seedFixture("watchlist_companies")}
+            className="rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200 disabled:opacity-60"
+          >
+            {pendingFixture === "watchlist_companies" ? "Seeding..." : "Seed Watchlist Fixture"}
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 min-h-6 text-sm text-slate-500">{message}</div>
+    </section>
+  );
+}
+
 function HomePage() {
+  const [refreshToken, setRefreshToken] = useState(0);
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f8fafc,_#dbeafe_38%,_#e2e8f0_72%,_#cbd5e1)]">
       <header className="border-b border-white/50 bg-white/70 backdrop-blur-xl">
@@ -240,8 +326,8 @@ function HomePage() {
                 PitchBook HubSpot Triage
               </h1>
               <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">
-                Review queues are route-based, job-backed, and intentionally limited to secure-mode shell behavior until the
-                internal record pipeline and actions are deployed.
+                Review queues are route-based and job-backed. Development seeds now flow through the same secure sync job
+                that the queue routes use for reads.
               </p>
             </div>
             <ShellNav />
@@ -250,12 +336,13 @@ function HomePage() {
       </header>
 
       <main className="mx-auto max-w-7xl py-6">
+        <SeedButtons onSeeded={() => setRefreshToken((current) => current + 1)} />
         <Routes>
           {QUEUES.map((queue) => (
             <Route
               key={queue.path}
               path={queue.path}
-              component={() => <QueuePage queue={queue} />}
+              component={() => <QueuePage queue={queue} refreshToken={refreshToken} />}
             />
           ))}
         </Routes>
