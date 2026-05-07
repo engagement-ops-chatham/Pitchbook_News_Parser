@@ -110,8 +110,10 @@ var DEMO_QUEUE_STATES = [
     owner_name: ""
   }
 ];
-var SEEDED_STATUSES = ["seeded", "seeded-demo", "ingested-mailbox"];
+var SEEDED_STATUSES = ["seeded", "seeded-demo", "ingested-mailbox", "ingested-manual"];
 var ALLOWED_QUEUE_STATUSES = ["high-confidence", "possible", "no-match", "not-relevant"];
+var ITEM_SPLIT_RE = /\n\s*([^\n|]+)\s*\|\s*([^\n|]+)\s*\|\s*(\d{1,2}-[A-Za-z]{3}-\d{4})\s*\n/g;
+var TRANSPORT_BLOB_RE = /\s*<https?:\/\/[^>]+>/g;
 
 function normalizeRecords(result) {
   if (!result) {
@@ -131,6 +133,38 @@ function normalizeRecords(result) {
 
 function recordData(record) {
   return record && record.data ? record.data : record || {};
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .replace(/\r/g, "")
+    .replace(/\u200a/g, "")
+    .replace(/\u200d/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeMultilineText(value) {
+  return String(value || "")
+    .replace(/\r/g, "")
+    .replace(/\u200a/g, "")
+    .replace(/\u200d/g, "")
+    .trim();
+}
+
+function stripTransportBlobs(text) {
+  return normalizeMultilineText(String(text || "").replace(TRANSPORT_BLOB_RE, ""));
+}
+
+function normalizeItemLines(chunk) {
+  var lines = [];
+  String(chunk || "").split("\n").forEach(function(rawLine) {
+    var line = stripTransportBlobs(rawLine);
+    if (line) {
+      lines.push(line);
+    }
+  });
+  return lines;
 }
 
 function listRecords(api, filters) {
@@ -202,6 +236,59 @@ function buildSeedKey(fixtureName, fixture, item, index) {
     .join("::");
 }
 
+function buildManualFixtureName(subject) {
+  var normalized = normalizeText(subject || "manual-pasted-email")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || "manual-pasted-email";
+}
+
+function extractFixtureFromPastedEmail(pastedEmail) {
+  var body = normalizeMultilineText(pastedEmail);
+  var subjectMatch = body.match(/PitchBook Alert\s*-\s*"([^"\n]+)"/i);
+  var segments = ("\n" + body + "\n").split(ITEM_SPLIT_RE);
+  var items = [];
+
+  if (segments.length >= 5) {
+    for (var index = 1; index < segments.length; index += 4) {
+      if (index + 3 >= segments.length) {
+        break;
+      }
+
+      var sourceName = normalizeText(segments[index]);
+      var publishedTime = normalizeText(segments[index + 1]);
+      var publishedDate = normalizeText(segments[index + 2]);
+      var chunk = normalizeMultilineText(segments[index + 3]);
+      var lines = normalizeItemLines(chunk);
+      var headline = lines.length ? normalizeText(lines[0]) : "";
+
+      if (!headline) {
+        continue;
+      }
+
+      items.push({
+        item_type: "news",
+        headline: headline,
+        source_name: sourceName,
+        published_at: normalizeText((publishedDate + " " + publishedTime).trim()),
+        raw_excerpt: lines.slice(0, 6).join("\n")
+      });
+    }
+  }
+
+  if (!items.length) {
+    throw new Error("No PitchBook items were found in pasted_email");
+  }
+
+  return {
+    source_subject: subjectMatch ? 'PitchBook Alert - "' + normalizeText(subjectMatch[1]) + '"' : "PitchBook Alert",
+    source_sender: "PitchBook Alerts <alerts-noreply@alerts.pitchbook.com>",
+    source_date: "",
+    items: items
+  };
+}
+
 function buildPendingNote(item, ownerName) {
   return [
     "Trigger: " + (item.headline || "Untitled alert"),
@@ -240,6 +327,30 @@ function buildSeedRecord(fixtureName, fixture, item, index, demoMode) {
   };
 }
 
+function buildManualRecord(fixtureName, fixture, item, index) {
+  return {
+    record_type: "alert_item",
+    status: "ingested-manual",
+    seed_key: buildSeedKey(fixtureName, fixture, item, index),
+    seed_fixture_name: fixtureName || "",
+    source_subject: fixture.source_subject || "",
+    source_sender: fixture.source_sender || "",
+    received_at: fixture.source_date || "",
+    source_name: item.source_name || "",
+    published_at: item.published_at || "",
+    headline: item.headline || "",
+    raw_excerpt: item.raw_excerpt || "",
+    item_type: item.item_type || "news",
+    processing_status: "queued",
+    relevance_status: "unreviewed",
+    match_bucket: "unprocessed",
+    evidence_status: "pending",
+    selected_company_id: "",
+    owner_name: "",
+    pending_note_body: ""
+  };
+}
+
 function buildSeedRecords(fixtureName, fixture, demoMode) {
   if (!fixture || !Array.isArray(fixture.items) || !fixture.items.length) {
     throw new Error("fixture.items is required");
@@ -247,6 +358,16 @@ function buildSeedRecords(fixtureName, fixture, demoMode) {
 
   return fixture.items.map(function(item, index) {
     return buildSeedRecord(fixtureName, fixture, item, index, demoMode);
+  });
+}
+
+function buildManualRecords(fixtureName, fixture) {
+  if (!fixture || !Array.isArray(fixture.items) || !fixture.items.length) {
+    throw new Error("fixture.items is required");
+  }
+
+  return fixture.items.map(function(item, index) {
+    return buildManualRecord(fixtureName, fixture, item, index);
   });
 }
 
@@ -359,6 +480,29 @@ function createSeedFixtureIngest(api) {
     return status;
   }
 
+  function requirePastedEmail(value) {
+    if (!normalizeText(value)) {
+      throw new Error("pasted_email is required");
+    }
+
+    return value;
+  }
+
+  function ingestPastedEmail(jobParams) {
+    var pastedEmail = requirePastedEmail(jobParams.pasted_email);
+    var fixture = extractFixtureFromPastedEmail(pastedEmail);
+    var fixtureName = buildManualFixtureName(fixture.source_subject);
+    var records = buildManualRecords(fixtureName, fixture);
+    var persisted = createMissingRecords(api, records);
+
+    return {
+      fixture_name: fixtureName,
+      created_count: persisted.createdRecords.length,
+      skipped_count: persisted.skippedCount,
+      total_fixture_items: records.length
+    };
+  }
+
   function run(jobParams) {
     var action = requireAction(jobParams || {});
     console.log("seed_fixture_ingest: received action=" + action);
@@ -376,6 +520,10 @@ function createSeedFixtureIngest(api) {
       }
 
       return seedFixture(jobParams, fixtureName, fixture, true);
+    }
+
+    if (action === "ingest_pasted_email") {
+      return ingestPastedEmail(jobParams || {});
     }
 
     if (action === "list_queue") {
@@ -403,6 +551,8 @@ function createSeedFixtureIngest(api) {
   return {
     run: run,
     buildSeedRecords: buildSeedRecords,
+    buildManualRecords: buildManualRecords,
+    extractFixtureFromPastedEmail: extractFixtureFromPastedEmail,
     filterQueue: filterQueue
   };
 }
@@ -415,7 +565,9 @@ if (typeof module !== "undefined") {
     SEEDED_STATUSES: SEEDED_STATUSES,
     buildSeedKey: buildSeedKey,
     buildSeedRecords: buildSeedRecords,
+    buildManualRecords: buildManualRecords,
     createSeedFixtureIngest: createSeedFixtureIngest,
+    extractFixtureFromPastedEmail: extractFixtureFromPastedEmail,
     filterQueue: filterQueue
   };
 }

@@ -859,9 +859,10 @@ function MailboxConnectionPanel({ onSynced }) {
   );
 }
 
-function MsgUploadPanel() {
+function MsgUploadPanel({ onIngested }) {
   const [message, setMessage] = useState("");
   const [pastedEmail, setPastedEmail] = useState("");
+  const [pastePending, setPastePending] = useState(false);
 
   function handleUpload(event) {
     const file = event.target.files && event.target.files[0];
@@ -872,13 +873,32 @@ function MsgUploadPanel() {
     setMessage(".msg upload received. Parsing adapter required.");
   }
 
-  function handlePasteSubmit() {
+  async function handlePasteSubmit() {
     if (!pastedEmail.trim()) {
       setMessage("Paste an email body before submitting.");
       return;
     }
 
-    setMessage("Pasted email received. Parsing adapter required.");
+    setPastePending(true);
+    setMessage("Parsing pasted email...");
+
+    try {
+      const result = await VibeAppAPI.triggerJob(QUEUE_JOB_NAME, {
+        action: "ingest_pasted_email",
+        pasted_email: pastedEmail
+      });
+      const payload = result && result.result ? result.result : result;
+      const createdCount = payload && typeof payload.created_count === "number" ? payload.created_count : 0;
+      const skippedCount = payload && typeof payload.skipped_count === "number" ? payload.skipped_count : 0;
+      setMessage("Pasted email ingested (" + createdCount + " created, " + skippedCount + " skipped).");
+      if (onIngested) {
+        onIngested();
+      }
+    } catch (error) {
+      setMessage(error && error.message ? error.message : "Failed to ingest pasted email.");
+    } finally {
+      setPastePending(false);
+    }
   }
 
   return (
@@ -919,9 +939,10 @@ function MsgUploadPanel() {
           <button
             type="button"
             onClick={handlePasteSubmit}
-            className="mt-3 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200"
+            disabled={pastePending}
+            className="mt-3 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-700 ring-1 ring-slate-200 disabled:opacity-60"
           >
-            Use pasted email
+            {pastePending ? "Ingesting..." : "Use pasted email"}
           </button>
           <div className="mt-3 min-h-6 text-sm text-slate-500">{message}</div>
         </div>
@@ -959,7 +980,7 @@ function HomePage() {
       <main className="mx-auto max-w-7xl py-6">
         <SeedButtons onSeeded={() => setRefreshToken((current) => current + 1)} />
         <MailboxConnectionPanel onSynced={() => setRefreshToken((current) => current + 1)} />
-        <MsgUploadPanel />
+        <MsgUploadPanel onIngested={() => setRefreshToken((current) => current + 1)} />
         <Routes>
           {QUEUES.map((queue) => (
             <Route

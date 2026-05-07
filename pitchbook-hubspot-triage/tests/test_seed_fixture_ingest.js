@@ -199,6 +199,74 @@ function testListQueueIncludesMailboxIngestedRecords() {
   assert.equal(result.items[0].data.status, "ingested-mailbox");
 }
 
+function testPastedEmailCreatesAlertItems() {
+  const api = createFakeApi();
+  const job = createSeedFixtureIngest(api);
+  const pastedEmail = [
+    'PitchBook Alert - "Key PE Sponsor Deals - Last 60 Days"',
+    "",
+    "City A.M. | 10:37 am | 18-Mar-2026",
+    "",
+    "City AM Awards 2026: Meet the Finalists",
+    "Entity mentions: Rvvup, OpenGamma",
+    "",
+    "Seeking Alpha | 5:30 am | 18-Mar-2026",
+    "",
+    "InPost S.A. GAAP EPS of PLN 0.12, revenue of PLN 4.46B; gives FY 2026 & Q1 2026 outlook",
+    "Entity mentions: InPost"
+  ].join("\n");
+
+  const result = job.run({
+    action: "ingest_pasted_email",
+    pasted_email: pastedEmail
+  });
+
+  assert.equal(result.created_count, 2);
+  assert.equal(result.skipped_count, 0);
+  assert.equal(result.total_fixture_items, 2);
+  assert.equal(api.records.length, 2);
+  assert.equal(api.records[0].data.status, "ingested-manual");
+  assert.equal(api.records[0].data.source_subject, 'PitchBook Alert - "Key PE Sponsor Deals - Last 60 Days"');
+  assert.equal(api.records[0].data.headline, "City AM Awards 2026: Meet the Finalists");
+  assert.equal(api.records[1].data.source_name, "Seeking Alpha");
+}
+
+function testPastedEmailRequiresText() {
+  const api = createFakeApi();
+  const job = createSeedFixtureIngest(api);
+
+  assert.throws(
+    () =>
+      job.run({
+        action: "ingest_pasted_email",
+        pasted_email: "   "
+      }),
+    /pasted_email is required/
+  );
+}
+
+function testListQueueIncludesManualIngestedRecords() {
+  const api = createFakeApi([
+    {
+      record_type: "alert_item",
+      status: "ingested-manual",
+      match_bucket: "possible",
+      relevance_status: "relevant",
+      headline: "Pasted refinancing alert"
+    }
+  ]);
+  const job = createSeedFixtureIngest(api);
+
+  const result = job.run({
+    action: "list_queue",
+    status: "possible"
+  });
+
+  assert.equal(result.total_count, 1);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].data.status, "ingested-manual");
+}
+
 function run() {
   testSeedRecordsIncludeExpectedBuckets();
   testSeedFixtureSkipsDuplicates();
@@ -207,6 +275,9 @@ function run() {
   testListQueueFiltersByBucketAndStatus();
   testListQueueRejectsUnknownStatuses();
   testListQueueIncludesMailboxIngestedRecords();
+  testPastedEmailCreatesAlertItems();
+  testPastedEmailRequiresText();
+  testListQueueIncludesManualIngestedRecords();
   console.log("test_seed_fixture_ingest.js: ok");
 }
 
