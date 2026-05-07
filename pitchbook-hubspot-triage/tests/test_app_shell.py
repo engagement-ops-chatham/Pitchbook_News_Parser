@@ -20,3 +20,5 @@ def test_app_includes_manual_msg_upload_shell() -> None:
     assert "popupAuthPayloadRef" in app_source
     assert "Microsoft 365 Popup" in app_source
     assert "Sign-In Complete" in app_source
+    assert "/auth/callback" in app_source
+    assert "isAuthCallbackPath" in app_source

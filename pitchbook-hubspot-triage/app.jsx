@@ -131,10 +131,18 @@ function getAppRedirectUri() {
   var pathname = window.location.pathname || "";
   var match = pathname.match(/^(\/vibe_apps\/\d+)/i);
   if (match) {
-    return origin + match[1];
+    return origin + match[1] + "/auth/callback";
   }
 
-  return (origin + pathname).replace(/\/$/, "");
+  return (origin + pathname).replace(/\/$/, "") + "/auth/callback";
+}
+
+function isAuthCallbackPath() {
+  if (typeof window === "undefined" || !window.location) {
+    return false;
+  }
+
+  return /\/auth\/callback\/?$/i.test(window.location.pathname || "");
 }
 
 function readEntraAuthResultFromLocation() {
@@ -1001,6 +1009,7 @@ function PopupCallbackPage({ state }) {
 export default function App() {
   const popupAuthPayloadRef = useRef(readEntraAuthResultFromLocation());
   const [popupCallbackState, setPopupCallbackState] = useState(null);
+  const popupCallbackPath = isAuthCallbackPath();
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1052,7 +1061,7 @@ export default function App() {
     return () => window.clearTimeout(closeTimer);
   }, []);
 
-  if (popupCallbackState || popupAuthPayloadRef.current) {
+  if (popupCallbackState || popupAuthPayloadRef.current || popupCallbackPath) {
     return <PopupCallbackPage state={popupCallbackState} />;
   }
 
