@@ -412,6 +412,50 @@ function SeedButtons({ onSeeded }) {
   );
 }
 
+function MsgUploadPanel() {
+  const [message, setMessage] = useState("");
+
+  function handleUpload(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) {
+      return;
+    }
+
+    setMessage(".msg upload received. Parsing adapter required.");
+  }
+
+  return (
+    <section className="mx-6 mt-6 rounded-3xl border border-dashed border-slate-300 bg-white/75 p-5 shadow-sm shadow-slate-200/30">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="max-w-2xl">
+          <div className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Adapter Seams</div>
+          <h2 className="mt-2 text-lg font-semibold text-slate-900">Manual `.msg` upload</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            The UI path is wired now. Actual binary `.msg` parsing activates when `MSG_PARSE_API_URL` and
+            `MSG_PARSE_API_TOKEN` are configured.
+          </p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Live Outlook ingest is scheduled through the server-side mailbox job. This panel is only the manual testing seam.
+          </p>
+        </div>
+        <div className="w-full max-w-md">
+          <label className="block text-sm font-medium text-slate-900" htmlFor="msg-upload-input">
+            Upload a PitchBook `.msg` sample
+          </label>
+          <input
+            id="msg-upload-input"
+            type="file"
+            accept=".msg"
+            onChange={handleUpload}
+            className="mt-3 block w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-600"
+          />
+          <div className="mt-3 min-h-6 text-sm text-slate-500">{message}</div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function HomePage() {
   const [refreshToken, setRefreshToken] = useState(0);
 
@@ -440,6 +484,7 @@ function HomePage() {
 
       <main className="mx-auto max-w-7xl py-6">
         <SeedButtons onSeeded={() => setRefreshToken((current) => current + 1)} />
+        <MsgUploadPanel />
         <Routes>
           {QUEUES.map((queue) => (
             <Route

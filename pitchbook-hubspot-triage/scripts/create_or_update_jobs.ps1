@@ -130,11 +130,16 @@ $overrideJobPath = Join-Path $root "jobs\resolve_match_override.js"
 if (-not (Test-Path -LiteralPath $overrideJobPath)) {
   throw "Missing job script at $overrideJobPath"
 }
+$mailboxIngestJobPath = Join-Path $root "jobs\ingest_pitchbook_emails.js"
+if (-not (Test-Path -LiteralPath $mailboxIngestJobPath)) {
+  throw "Missing job script at $mailboxIngestJobPath"
+}
 
 $baseUrl = Get-VibeBaseUrl
 $seedScript = Get-Content -LiteralPath $jobPath -Raw
 $analysisScript = Get-Content -LiteralPath $analysisJobPath -Raw
 $overrideScript = Get-Content -LiteralPath $overrideJobPath -Raw
+$mailboxIngestScript = Get-Content -LiteralPath $mailboxIngestJobPath -Raw
 $jobDefinitions = @(
   @{
     name = "seed_fixture_ingest"
@@ -162,6 +167,16 @@ $jobDefinitions = @(
     enabled = $true
     invokable_from_client = $true
     concurrency_policy = "reject_overlapping"
+  },
+  @{
+    name = "ingest_pitchbook_emails"
+    job_type = "async"
+    script = $mailboxIngestScript
+    description = "Scheduled mailbox ingest for PitchBook alerts"
+    enabled = $true
+    invokable_from_client = $false
+    concurrency_policy = "reject_overlapping"
+    cron_schedule = "0 8 * * 1-5"
   }
 )
 
