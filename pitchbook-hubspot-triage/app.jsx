@@ -40,6 +40,37 @@ const LOAD_MAILBOX_CONNECTION_JOB_NAME = "load_mailbox_connection";
 const ENTRA_AUTH_CHANNEL = "pitchbook-hubspot-triage-entra-auth";
 const ENTRA_AUTH_STORAGE_KEY = "pitchbook-hubspot-triage-entra-auth-result";
 
+function coerceCount(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function extractJobPayload(result) {
+  if (!result || typeof result !== "object") {
+    return result;
+  }
+
+  if (result.result && typeof result.result === "object") {
+    return result.result;
+  }
+
+  if (result.data && typeof result.data === "object") {
+    return result.data;
+  }
+
+  return result;
+}
+
 function useJob(jobName, params, options) {
   const [state, setState] = useState({
     loading: true,
@@ -505,9 +536,9 @@ function SeedButtons({ onSeeded }) {
         action: "seed_demo_fixture",
         fixture_name: fixtureName
       });
-      const payload = result && result.result ? result.result : result;
-      const createdCount = payload && typeof payload.created_count === "number" ? payload.created_count : 0;
-      const skippedCount = payload && typeof payload.skipped_count === "number" ? payload.skipped_count : 0;
+      const payload = extractJobPayload(result);
+      const createdCount = coerceCount(payload && payload.created_count) ?? 0;
+      const skippedCount = coerceCount(payload && payload.skipped_count) ?? 0;
 
       setMessage("Seeded " + fixtureName + " (" + createdCount + " created, " + skippedCount + " skipped).");
       if (onSeeded) {
@@ -737,10 +768,10 @@ function MailboxConnectionPanel({ onSynced }) {
 
     try {
       const result = await VibeAppAPI.triggerJob(MAILBOX_JOB_NAME, {});
-      const payload = result && result.result ? result.result : result;
+      const payload = extractJobPayload(result);
       const importedMessageCount =
-        payload && typeof payload.imported_message_count === "number" ? payload.imported_message_count : 0;
-      const importedItemCount = payload && typeof payload.imported_item_count === "number" ? payload.imported_item_count : 0;
+        coerceCount(payload && payload.imported_message_count) ?? 0;
+      const importedItemCount = coerceCount(payload && payload.imported_item_count) ?? 0;
       setAuthNotice(
         "Mailbox sync complete (" + importedMessageCount + " messages scanned, " + importedItemCount + " alert items imported)."
       );
@@ -887,10 +918,17 @@ function MsgUploadPanel({ onIngested }) {
         action: "ingest_pasted_email",
         pasted_email: pastedEmail
       });
-      const payload = result && result.result ? result.result : result;
-      const createdCount = payload && typeof payload.created_count === "number" ? payload.created_count : 0;
-      const skippedCount = payload && typeof payload.skipped_count === "number" ? payload.skipped_count : 0;
-      setMessage("Pasted email ingested (" + createdCount + " created, " + skippedCount + " skipped).");
+      const payload = extractJobPayload(result);
+      const createdCount = coerceCount(payload && payload.created_count);
+      const skippedCount = coerceCount(payload && payload.skipped_count);
+
+      if (createdCount === null && skippedCount === null) {
+        setMessage("Pasted email was submitted. Refresh the queues to confirm whether new items were created.");
+      } else {
+        setMessage(
+          "Pasted email ingested (" + String(createdCount ?? 0) + " created, " + String(skippedCount ?? 0) + " skipped)."
+        );
+      }
       if (onIngested) {
         onIngested();
       }
