@@ -131,18 +131,18 @@ function getAppRedirectUri() {
   var pathname = window.location.pathname || "";
   var match = pathname.match(/^(\/vibe_apps\/\d+)/i);
   if (match) {
-    return origin + match[1] + "/auth/callback";
+    return origin + match[1];
   }
 
-  return (origin + pathname).replace(/\/$/, "") + "/auth/callback";
+  return (origin + pathname).replace(/\/$/, "");
 }
 
-function isAuthCallbackPath() {
-  if (typeof window === "undefined" || !window.location) {
+function isAuthPopupWindow() {
+  if (typeof window === "undefined") {
     return false;
   }
 
-  return /\/auth\/callback\/?$/i.test(window.location.pathname || "");
+  return window.name === "pitchbook-mailbox-auth";
 }
 
 function readEntraAuthResultFromLocation() {
@@ -1009,7 +1009,7 @@ function PopupCallbackPage({ state }) {
 export default function App() {
   const popupAuthPayloadRef = useRef(readEntraAuthResultFromLocation());
   const [popupCallbackState, setPopupCallbackState] = useState(null);
-  const popupCallbackPath = isAuthCallbackPath();
+  const popupAuthWindow = isAuthPopupWindow();
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1061,7 +1061,7 @@ export default function App() {
     return () => window.clearTimeout(closeTimer);
   }, []);
 
-  if (popupCallbackState || popupAuthPayloadRef.current || popupCallbackPath) {
+  if (popupCallbackState || popupAuthPayloadRef.current || popupAuthWindow) {
     return <PopupCallbackPage state={popupCallbackState} />;
   }
 
