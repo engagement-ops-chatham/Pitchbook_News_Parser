@@ -75,6 +75,7 @@ function Upsert-Job {
     [Parameter(Mandatory = $true)]
     [hashtable]$Definition,
     [Parameter(Mandatory = $true)]
+    [AllowEmptyCollection()]
     [object[]]$ExistingJobs
   )
 
@@ -183,7 +184,7 @@ $jobDefinitions = @(
 $existingJobResponse = Invoke-RestMethod -Uri "$baseUrl/api/v1/vibe_apps/$($env:VIBE_APP_ID)/jobs" -Method Get -Headers @{
   Authorization = "Bearer $env:VIBE_API_KEY"
 }
-$existingJobs = Get-JobResponseCollection -Response $existingJobResponse
+$existingJobs = @(Get-JobResponseCollection -Response $existingJobResponse)
 
 $results = foreach ($definition in $jobDefinitions) {
   Upsert-Job -BaseUrl $baseUrl -AppId $env:VIBE_APP_ID -Definition $definition -ExistingJobs $existingJobs
