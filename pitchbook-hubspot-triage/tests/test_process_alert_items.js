@@ -518,6 +518,88 @@ function testHighConfidenceWithoutSelectedCandidateFallsBackToPossible() {
   assert.equal(updated.pending_note_body, "");
 }
 
+function testHubSpotDirectApiFallbackWorksWhenConnectorIsRestricted() {
+  const api = createFakeApi(
+    [createQueuedRecord("one", "Acquisition financing")],
+    {
+      ...baseSecrets(),
+      HUBSPOT_PRIVATE_APP_TOKEN: "hubspot-pat"
+    }
+  );
+  api.queryConnector = function queryConnector() {
+    this.connectorCalls.push({ status: 422 });
+    return {
+      status: 422,
+      data: {
+        error: "restricted"
+      }
+    };
+  };
+
+  const seenCalls = [];
+  const job = createProcessAlertItems(api, {
+    fetch: createFakeFetch(
+      [
+        {
+          json: {
+            relevance_status: "relevant",
+            relevance_rationale: "Acquisition financing is in scope",
+            matched_trigger_terms: ["acquisition"],
+            company_name: "Acquisition Financing Holdings"
+          }
+        },
+        {
+          json: {
+            sources: [
+              {
+                url: "https://news.example.test/acquisition",
+                title: "Acquisition financing story",
+                snippet: "Confirms the transaction"
+              }
+            ]
+          }
+        },
+        {
+          json: {
+            results: [
+              {
+                id: "hs-300",
+                properties: {
+                  name: "Acquisition Financing Holdings",
+                  ultimate_parent_name: "ParentCo",
+                  hubspot_owner_id: "Jamie Rivera",
+                  client_status: "client"
+                }
+              }
+            ]
+          }
+        },
+        {
+          json: {
+            match_bucket: "high-confidence",
+            selected_candidate: { id: "hs-300" }
+          }
+        }
+      ],
+      seenCalls
+    )
+  });
+
+  const result = job.run();
+  const updated = api.records.find((record) => record.id === "one").data;
+
+  assert.equal(result.high_confidence_count, 1);
+  assert.equal(updated.selected_company_id, "hs-300");
+  assert.equal(updated.owner_name, "Jamie Rivera");
+
+  const directCall = seenCalls[2];
+  assert.equal(directCall.url, "https://api.hubapi.com/crm/v3/objects/companies/search");
+  assert.equal(directCall.options.headers.Authorization, "Bearer hubspot-pat");
+  const payload = JSON.parse(directCall.options.body);
+  assert.equal(payload.query, "Acquisition Financing Holdings");
+  assert.deepEqual(payload.properties, ["name", "ultimate_parent_name", "hubspot_owner_id", "client_status"]);
+}
+
 function run() {
   testMissingSecretsFailImmediately();
   testQueuedRecordsAreClassifiedAndResearched();
@@ -527,6 +609,7 @@ function run() {
   testRelevantRecordsAreMatchedAgainstHubSpotCandidates();
   testRelevantRecordsWithoutCandidatesBecomeNoMatch();
   testHighConfidenceWithoutSelectedCandidateFallsBackToPossible();
+  testHubSpotDirectApiFallbackWorksWhenConnectorIsRestricted();
   console.log("test_process_alert_items.js: ok");
 }
 

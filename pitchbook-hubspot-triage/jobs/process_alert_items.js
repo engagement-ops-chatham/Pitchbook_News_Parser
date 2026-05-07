@@ -17,6 +17,8 @@ var DEFAULT_TRIGGER_TERMS = [
 ];
 var QUEUE_BATCH_SIZE = 25;
 var HUBSPOT_COMPANY_CONNECTOR = "customer_relationship_management_hubspot";
+var HUBSPOT_COMPANY_SEARCH_URL = "https://api.hubapi.com/crm/v3/objects/companies/search";
+var HUBSPOT_COMPANY_PROPERTIES = ["name", "ultimate_parent_name", "hubspot_owner_id", "client_status"];
 
 function requireSecret(api, name) {
   var value = api.getSecret(name);
@@ -25,6 +27,14 @@ function requireSecret(api, name) {
   }
 
   return value;
+}
+
+function getOptionalSecret(api, name) {
+  if (!api || !api.getSecret) {
+    return "";
+  }
+
+  return api.getSecret(name) || "";
 }
 
 function normalizeRecords(result) {
@@ -198,7 +208,7 @@ function normalizeHubSpotCandidates(result) {
     });
 }
 
-function queryHubSpotCompanies(api, name) {
+function queryHubSpotCompaniesViaConnector(api, name) {
   if (!api.queryConnector) {
     throw new Error("HubSpot connector access is not available");
   }
@@ -210,7 +220,7 @@ function queryHubSpotCompanies(api, name) {
     body: {
       query: name,
       limit: 5,
-      properties: ["name", "ultimate_parent_name", "hubspot_owner_id", "client_status"]
+      properties: HUBSPOT_COMPANY_PROPERTIES
     }
   });
 
@@ -219,6 +229,37 @@ function queryHubSpotCompanies(api, name) {
   }
 
   return normalizeHubSpotCandidates(result);
+}
+
+function queryHubSpotCompaniesDirect(api, fetchImpl, name) {
+  var token = getOptionalSecret(api, "HUBSPOT_PRIVATE_APP_TOKEN");
+  if (!token) {
+    throw new Error("HubSpot direct API token is not configured");
+  }
+
+  var result = postJson(fetchImpl, HUBSPOT_COMPANY_SEARCH_URL, token, {
+    query: name,
+    limit: 5,
+    properties: HUBSPOT_COMPANY_PROPERTIES
+  });
+
+  return normalizeHubSpotCandidates(result);
+}
+
+function queryHubSpotCompanies(api, fetchImpl, name) {
+  var connectorError = null;
+
+  try {
+    return queryHubSpotCompaniesViaConnector(api, name);
+  } catch (error) {
+    connectorError = error;
+  }
+
+  if (getOptionalSecret(api, "HUBSPOT_PRIVATE_APP_TOKEN")) {
+    return queryHubSpotCompaniesDirect(api, fetchImpl, name);
+  }
+
+  throw connectorError || new Error("HubSpot company lookup is not available");
 }
 
 function buildMatchValidationPayload(data, classification, candidates) {
@@ -461,7 +502,7 @@ function createProcessAlertItems(api, runtime) {
           if (relevanceStatus === "relevant") {
             try {
               var companyName = classification.company_name || data.company_name || data.headline || "";
-              var candidates = queryHubSpotCompanies(api, companyName);
+              var candidates = queryHubSpotCompanies(api, fetchImpl, companyName);
               var review = null;
 
               if (candidates.length) {
@@ -555,6 +596,8 @@ if (typeof module !== "undefined") {
   module.exports = {
     DEFAULT_TRIGGER_TERMS: DEFAULT_TRIGGER_TERMS,
     HUBSPOT_COMPANY_CONNECTOR: HUBSPOT_COMPANY_CONNECTOR,
+    HUBSPOT_COMPANY_PROPERTIES: HUBSPOT_COMPANY_PROPERTIES,
+    HUBSPOT_COMPANY_SEARCH_URL: HUBSPOT_COMPANY_SEARCH_URL,
     QUEUE_BATCH_SIZE: QUEUE_BATCH_SIZE,
     assignMatchBucket: assignMatchBucket,
     buildAnalysisUpdate: buildAnalysisUpdate,
@@ -567,12 +610,15 @@ if (typeof module !== "undefined") {
     buildPendingNote: buildPendingNote,
     createProcessAlertItems: createProcessAlertItems,
     extractCorroboratingSource: extractCorroboratingSource,
+    getOptionalSecret: getOptionalSecret,
     normalizeHubSpotCandidate: normalizeHubSpotCandidate,
     normalizeHubSpotCandidates: normalizeHubSpotCandidates,
     normalizeMatchedTerms: normalizeMatchedTerms,
     normalizeRelevanceStatus: normalizeRelevanceStatus,
     normalizeReviewCandidates: normalizeReviewCandidates,
     postJson: postJson,
+    queryHubSpotCompaniesDirect: queryHubSpotCompaniesDirect,
+    queryHubSpotCompaniesViaConnector: queryHubSpotCompaniesViaConnector,
     queryHubSpotCompanies: queryHubSpotCompanies,
     recordData: recordData,
     requireSecret: requireSecret,
