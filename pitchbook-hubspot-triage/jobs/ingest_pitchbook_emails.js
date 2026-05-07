@@ -47,10 +47,89 @@ function normalizeMessageItems(message) {
   return message.items;
 }
 
+function buildMailboxItemKey(message, item) {
+  return [
+    message && message.source_subject ? message.source_subject : "",
+    message && message.source_sender ? message.source_sender : "",
+    message && message.source_date ? message.source_date : "",
+    item && item.item_type ? item.item_type : "news",
+    item && item.source_name ? item.source_name : "",
+    item && item.published_at ? item.published_at : "",
+    item && item.headline ? item.headline : "",
+    item && item.raw_excerpt ? item.raw_excerpt : ""
+  ]
+    .map(function(part) {
+      return String(part || "")
+        .trim()
+        .toLowerCase();
+    })
+    .join("::");
+}
+
+function normalizeRecords(result) {
+  if (!result) {
+    return [];
+  }
+
+  if (Array.isArray(result)) {
+    return result;
+  }
+
+  if (Array.isArray(result.records)) {
+    return result.records;
+  }
+
+  return [];
+}
+
+function recordData(record) {
+  return record && record.data ? record.data : record || {};
+}
+
+function listRecords(api, filters) {
+  var offset = 0;
+  var pageSize = 100;
+  var allRecords = [];
+
+  while (true) {
+    var page = normalizeRecords(
+      api.query(filters || {}, { limit: pageSize, offset: offset, order: "created_at desc" })
+    );
+
+    if (!page.length) {
+      break;
+    }
+
+    allRecords = allRecords.concat(page);
+
+    if (page.length < pageSize) {
+      break;
+    }
+
+    offset += pageSize;
+  }
+
+  return allRecords;
+}
+
+function listExistingMailboxKeys(api) {
+  var keys = {};
+
+  listRecords(api, { record_type: "alert_item", status: "ingested-mailbox" }).forEach(function(record) {
+    var data = recordData(record);
+    if (data.mailbox_item_key) {
+      keys[data.mailbox_item_key] = true;
+    }
+  });
+
+  return keys;
+}
+
 function buildAlertRecord(message, item) {
   return {
     record_type: "alert_item",
     status: "ingested-mailbox",
+    mailbox_item_key: buildMailboxItemKey(message, item),
     source_subject: message && message.source_subject ? message.source_subject : "",
     source_sender: message && message.source_sender ? message.source_sender : "",
     received_at: message && message.source_date ? message.source_date : "",
@@ -85,6 +164,7 @@ function createIngestPitchbookEmails(api, dependencies) {
 
     var messages = payload && Array.isArray(payload.items) ? payload.items : [];
     var importedItemCount = 0;
+    var existingMailboxKeys = listExistingMailboxKeys(api);
 
     messages.forEach(function(message) {
       var items = normalizeMessageItems(message);
@@ -92,12 +172,25 @@ function createIngestPitchbookEmails(api, dependencies) {
         return;
       }
 
-      importedItemCount += items.length;
-      api.create(
-        items.map(function(item) {
+      var recordsToCreate = items
+        .map(function(item) {
           return buildAlertRecord(message, item);
         })
-      );
+        .filter(function(record) {
+          if (existingMailboxKeys[record.mailbox_item_key]) {
+            return false;
+          }
+
+          existingMailboxKeys[record.mailbox_item_key] = true;
+          return true;
+        });
+
+      if (!recordsToCreate.length) {
+        return;
+      }
+
+      importedItemCount += recordsToCreate.length;
+      api.create(recordsToCreate);
     });
 
     return {
@@ -116,9 +209,13 @@ if (typeof module !== "undefined") {
     LOOKBACK_HOURS: LOOKBACK_HOURS,
     MAILBOX_INGEST_SOURCE: MAILBOX_INGEST_SOURCE,
     buildAlertRecord: buildAlertRecord,
+    buildMailboxItemKey: buildMailboxItemKey,
     createIngestPitchbookEmails: createIngestPitchbookEmails,
+    listExistingMailboxKeys: listExistingMailboxKeys,
     normalizeMessageItems: normalizeMessageItems,
+    normalizeRecords: normalizeRecords,
     postJson: postJson,
+    recordData: recordData,
     requireSecret: requireSecret
   };
 }

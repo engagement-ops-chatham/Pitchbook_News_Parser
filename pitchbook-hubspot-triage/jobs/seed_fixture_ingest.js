@@ -110,7 +110,7 @@ var DEMO_QUEUE_STATES = [
     owner_name: ""
   }
 ];
-var SEEDED_STATUSES = ["seeded", "seeded-demo"];
+var SEEDED_STATUSES = ["seeded", "seeded-demo", "ingested-mailbox"];
 var ALLOWED_QUEUE_STATUSES = ["high-confidence", "possible", "no-match", "not-relevant"];
 
 function normalizeRecords(result) {

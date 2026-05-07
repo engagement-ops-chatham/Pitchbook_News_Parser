@@ -14,6 +14,27 @@ function createFakeApi(secrets) {
     getSecret(name) {
       return this.secrets[name] || "";
     },
+    query(filters, options) {
+      const filtered = this.records.filter((record) => {
+        const data = record.data || {};
+
+        if (filters && filters.record_type && data.record_type !== filters.record_type) {
+          return false;
+        }
+
+        if (filters && filters.status && data.status !== filters.status) {
+          return false;
+        }
+
+        return true;
+      });
+
+      const offset = options && typeof options.offset === "number" ? options.offset : 0;
+      const limit = options && typeof options.limit === "number" ? options.limit : filtered.length;
+      return {
+        records: filtered.slice(offset, offset + limit)
+      };
+    },
     create(records) {
       this.createCalls.push(records);
       records.forEach((record, index) => {
@@ -146,10 +167,47 @@ function testMailboxAdapterFailuresBubbleWithStatus() {
   assert.throws(() => job.run(), /Mailbox adapter failed: 503 Service Unavailable - adapter offline/);
 }
 
+function testMailboxPayloadSkipsPreviouslyIngestedDuplicates() {
+  const api = createFakeApi(baseSecrets());
+  const seenCalls = [];
+  const response = {
+    json: {
+      items: [
+        {
+          source_subject: 'PitchBook Alert - "PE/M&A Deals - Last 30 Days"',
+          source_sender: "PitchBook Alerts <alerts-noreply@alerts.pitchbook.com>",
+          source_date: "2026-05-07T07:58:00-04:00",
+          items: [
+            {
+              item_type: "news",
+              source_name: "DealStreetAsia",
+              published_at: "07-May-2026 7:10 am",
+              headline: "Refinancing package expands for GrowthCo",
+              raw_excerpt: "GrowthCo refinancing package expands"
+            }
+          ]
+        }
+      ]
+    }
+  };
+  const job = createIngestPitchbookEmails(api, {
+    fetch: createFetchStub(response, seenCalls)
+  });
+
+  const first = job.run();
+  const second = job.run();
+
+  assert.equal(first.imported_item_count, 1);
+  assert.equal(second.imported_item_count, 0);
+  assert.equal(api.createCalls.length, 1);
+  assert.equal(api.records.length, 1);
+}
+
 function run() {
   testMissingSecretsFailImmediately();
   testMailboxPayloadCreatesQueuedAlertRecords();
   testMailboxAdapterFailuresBubbleWithStatus();
+  testMailboxPayloadSkipsPreviouslyIngestedDuplicates();
   console.log("test_ingest_pitchbook_emails.js: ok");
 }
 

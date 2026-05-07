@@ -177,6 +177,28 @@ function testListQueueRejectsUnknownStatuses() {
   );
 }
 
+function testListQueueIncludesMailboxIngestedRecords() {
+  const api = createFakeApi([
+    {
+      record_type: "alert_item",
+      status: "ingested-mailbox",
+      match_bucket: "high-confidence",
+      relevance_status: "relevant",
+      headline: "Mailbox-imported refinancing alert"
+    }
+  ]);
+  const job = createSeedFixtureIngest(api);
+
+  const result = job.run({
+    action: "list_queue",
+    status: "high-confidence"
+  });
+
+  assert.equal(result.total_count, 1);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].data.status, "ingested-mailbox");
+}
+
 function run() {
   testSeedRecordsIncludeExpectedBuckets();
   testSeedFixtureSkipsDuplicates();
@@ -184,6 +206,7 @@ function run() {
   testSeedFixtureRejectsClientTriggeredCustomPayloads();
   testListQueueFiltersByBucketAndStatus();
   testListQueueRejectsUnknownStatuses();
+  testListQueueIncludesMailboxIngestedRecords();
   console.log("test_seed_fixture_ingest.js: ok");
 }
 
