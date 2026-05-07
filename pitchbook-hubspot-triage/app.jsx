@@ -36,6 +36,7 @@ const OVERRIDE_JOB_NAME = "resolve_match_override";
 const MAILBOX_JOB_NAME = "ingest_pitchbook_emails";
 const BOOTSTRAP_AUTH_JOB_NAME = "bootstrap_auth_config";
 const EXCHANGE_AUTH_JOB_NAME = "exchange_auth_code";
+const UPSERT_AUTH_EXCHANGE_JOB_NAME = "upsert_auth_exchange_request";
 const LOAD_MAILBOX_CONNECTION_JOB_NAME = "load_mailbox_connection";
 const ENTRA_AUTH_CHANNEL = "pitchbook-hubspot-triage-entra-auth";
 const ENTRA_AUTH_STORAGE_KEY = "pitchbook-hubspot-triage-entra-auth-result";
@@ -276,27 +277,12 @@ function getCurrentUserEmail() {
 
 async function upsertAuthExchangeRecord(patch) {
   const requestedByEmail = getCurrentUserEmail();
-  const filters = requestedByEmail
-    ? { type: "auth_exchange_request", requestedByEmail }
-    : { type: "auth_exchange_request" };
-  const response = await VibeAppAPI.query(filters, { limit: 1, order: "updated_at desc" });
-  const records = Array.isArray(response?.records) ? response.records : [];
-  const nextData = Object.assign(
-    {
-      type: "auth_exchange_request",
-      requestedByEmail
-    },
-    records[0]?.data || {},
-    patch || {}
-  );
-
-  if (records.length) {
-    await VibeAppAPI.update([{ id: records[0].id, data: nextData }]);
-    return records[0].id;
-  }
-
-  const created = await VibeAppAPI.create([nextData]);
-  return created?.[0]?.id || null;
+  const response = await VibeAppAPI.triggerJob(UPSERT_AUTH_EXCHANGE_JOB_NAME, {
+    requestedByEmail,
+    ...(patch || {})
+  });
+  const payload = extractJobPayload(response);
+  return payload && payload.record_id ? payload.record_id : null;
 }
 
 function createRandomString(length) {

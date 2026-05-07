@@ -50,6 +50,8 @@ def test_entra_auth_jobs_are_registered_for_client_use() -> None:
     assert 'name = "bootstrap_auth_config"' in script
     assert 'name = "exchange_auth_code"' in script
     assert 'name = "load_mailbox_connection"' in script
+    assert 'name = "upsert_auth_exchange_request"' in script
     assert "description = \"Loads the Microsoft Entra auth configuration for mailbox connection\"" in script
     assert "description = \"Exchanges Microsoft Entra auth codes for delegated Graph tokens\"" in script
     assert "description = \"Returns mailbox auth state and last ingest summary\"" in script
+    assert "description = \"Persists mailbox auth exchange request state for the client popup flow\"" in script

@@ -23,5 +23,9 @@ def test_app_includes_manual_msg_upload_shell() -> None:
     assert "pitchbook-mailbox-auth" in app_source
     assert "isAuthPopupWindow" in app_source
     assert "upsertAuthExchangeRecord" in app_source
+    assert "UPSERT_AUTH_EXCHANGE_JOB_NAME" in app_source
+    assert 'triggerJob(UPSERT_AUTH_EXCHANGE_JOB_NAME' in app_source
+    assert 'VibeAppAPI.create([nextData])' not in app_source
+    assert 'VibeAppAPI.update([{ id: records[0].id, data: nextData }])' not in app_source
     assert "popupWatchRef" in app_source
     assert "Waiting for Microsoft sign-in to finish in the popup window..." in app_source

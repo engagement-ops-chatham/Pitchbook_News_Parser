@@ -143,6 +143,10 @@ $exchangeAuthJobPath = Join-Path $root "jobs\exchange_auth_code.js"
 if (-not (Test-Path -LiteralPath $exchangeAuthJobPath)) {
   throw "Missing job script at $exchangeAuthJobPath"
 }
+$upsertAuthExchangeRequestJobPath = Join-Path $root "jobs\upsert_auth_exchange_request.js"
+if (-not (Test-Path -LiteralPath $upsertAuthExchangeRequestJobPath)) {
+  throw "Missing job script at $upsertAuthExchangeRequestJobPath"
+}
 $loadMailboxConnectionJobPath = Join-Path $root "jobs\load_mailbox_connection.js"
 if (-not (Test-Path -LiteralPath $loadMailboxConnectionJobPath)) {
   throw "Missing job script at $loadMailboxConnectionJobPath"
@@ -155,6 +159,7 @@ $overrideScript = Get-Content -LiteralPath $overrideJobPath -Raw
 $mailboxIngestScript = Get-Content -LiteralPath $mailboxIngestJobPath -Raw
 $bootstrapAuthScript = Get-Content -LiteralPath $bootstrapAuthJobPath -Raw
 $exchangeAuthScript = Get-Content -LiteralPath $exchangeAuthJobPath -Raw
+$upsertAuthExchangeRequestScript = Get-Content -LiteralPath $upsertAuthExchangeRequestJobPath -Raw
 $loadMailboxConnectionScript = Get-Content -LiteralPath $loadMailboxConnectionJobPath -Raw
 $jobDefinitions = @(
   @{
@@ -198,6 +203,15 @@ $jobDefinitions = @(
     job_type = "sync"
     script = $exchangeAuthScript
     description = "Exchanges Microsoft Entra auth codes for delegated Graph tokens"
+    enabled = $true
+    invokable_from_client = $true
+    concurrency_policy = "reject_overlapping"
+  },
+  @{
+    name = "upsert_auth_exchange_request"
+    job_type = "sync"
+    script = $upsertAuthExchangeRequestScript
+    description = "Persists mailbox auth exchange request state for the client popup flow"
     enabled = $true
     invokable_from_client = $true
     concurrency_policy = "reject_overlapping"
