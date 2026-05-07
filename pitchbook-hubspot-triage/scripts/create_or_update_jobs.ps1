@@ -122,9 +122,14 @@ $jobPath = Join-Path $root "jobs\seed_fixture_ingest.js"
 if (-not (Test-Path -LiteralPath $jobPath)) {
   throw "Missing job script at $jobPath"
 }
+$analysisJobPath = Join-Path $root "jobs\process_alert_items.js"
+if (-not (Test-Path -LiteralPath $analysisJobPath)) {
+  throw "Missing job script at $analysisJobPath"
+}
 
 $baseUrl = Get-VibeBaseUrl
 $seedScript = Get-Content -LiteralPath $jobPath -Raw
+$analysisScript = Get-Content -LiteralPath $analysisJobPath -Raw
 $jobDefinitions = @(
   @{
     name = "seed_fixture_ingest"
@@ -133,6 +138,15 @@ $jobDefinitions = @(
     description = "Trusted sync job for fixture seeding and queue reads"
     enabled = $true
     invokable_from_client = $true
+    concurrency_policy = "reject_overlapping"
+  },
+  @{
+    name = "process_alert_items"
+    job_type = "async"
+    script = $analysisScript
+    description = "Classifies trigger relevance and corroborates sources"
+    enabled = $true
+    invokable_from_client = $false
     concurrency_policy = "reject_overlapping"
   }
 )

@@ -1,0 +1,13 @@
+from pathlib import Path
+
+
+def test_process_alert_items_job_is_server_only() -> None:
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "create_or_update_jobs.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert 'name = "process_alert_items"' in script
+    assert "job_type = \"async\"" in script
+    assert "invokable_from_client = $false" in script
